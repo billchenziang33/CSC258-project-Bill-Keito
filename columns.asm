@@ -39,8 +39,23 @@ color_middle:
 color_bottom:
     .word 0x0000FF        # blue
 
+
 bg_color:
     .word 0x000000        # black
+
+color_list:
+  .word 0xFF0000        # red
+  .word 0x00FF00        # green
+  .word 0x0000FF        # blue
+  .word 0xFFFF00        # yellow
+  .word 0xFF00FF        # magenta
+  .word 0x00FFFF        # cyan
+
+grid:
+  .space 4096
+
+mark_grid:
+  .space 4096    # 32 * 32 * 4
 
 .text
 .globl main
@@ -52,8 +67,18 @@ main:
     # Draw border first
     jal draw_border
 
+    jal get_random_color
+    sw $v0, color_top
+
+    jal get_random_color
+    sw $v0, color_middle
+
+    jal get_random_color
+    sw $v0, color_bottom
+
     # Draw initial column
     jal draw_column
+
 
 ##############################################################################
 # Main game loop
@@ -61,7 +86,7 @@ main:
 main_loop:
     # Small delay
     li   $v0, 32
-    li   $a0, 1
+    li   $a0, 16      # Repaint at 60HZ
     syscall
 
     # Poll keyboard
@@ -72,7 +97,7 @@ main_loop:
 
 ##############################################################################
 # Keyboard handling
-##############################################################################
+##############################################################################ss
 keyboard_input:
     lw   $a0, 4($t0)
 
@@ -93,8 +118,14 @@ move_left:
     li   $t2, 10
     beq  $t1, $t2, main_loop     # do nothing if already at left boundary
 
+    lw   $a0, col_x
+    addi $a0, $a0, -1
+    jal  check_horizontal_collision
+    bne  $v0, $zero, main_loop
+
     jal  erase_column
 
+    lw $t1, col_x
     addi $t1, $t1, -1
     sw   $t1, col_x
 
@@ -110,8 +141,14 @@ move_right:
     li   $t2, 21
     beq  $t1, $t2, main_loop     # do nothing if already at right boundary
 
+    lw   $a0, col_x
+    addi $a0, $a0, 1
+    jal  check_horizontal_collision
+    bne  $v0, $zero, main_loop
+
     jal  erase_column
 
+    lw $t1, col_x
     addi $t1, $t1, 1
     sw   $t1, col_x
 
@@ -125,18 +162,34 @@ move_right:
 # so top block can go down to y = 28
 ##############################################################################
 move_down:
-    lw   $t1, col_y
-    li   $t2, 28
-    beq  $t1, $t2, main_loop     # do nothing if already at bottom boundary
+  jal check_collision
+  bne $v0, $zero, move_down_lock
 
-    jal erase_column
+  jal erase_column
 
-    lw $t1, col_y
-    addi $t1, $t1, 1
-    sw $t1, col_y
+  lw $t1, col_y
+  addi $t1, $t1, 1
+  sw $t1, col_y
 
-    jal draw_column
-    b main_loop
+  jal draw_column
+  b main_loop
+
+move_down_lock:
+  jal lock_column
+
+resolve_loop:
+  jal remove_matches
+  beq $v0, $zero, resolve_done
+  jal apply_gravity
+  b resolve_loop
+
+resolve_done:
+  jal draw_grid
+  jal draw_border
+  jal create_new_column
+  jal draw_column
+  b main_loop
+
 
 ##############################################################################
 # Shuffle colors downward
@@ -205,6 +258,567 @@ erase_column:
     sw   $t5, 256($t0)
 
     jr   $ra
+
+
+get_random_color:
+  li $v0, 42
+  li $a0, 0              # use default generator for random integer
+  li $a1, 6              # set upper bound as 6, so we can choose 0-5
+  syscall                # $a0 = random index
+
+  la $t0, color_list
+  sll $t1, $a0, 2
+  add $t0, $t0, $t1
+  lw $v0, 0($t0)
+
+  jr $ra
+
+# a0 = x-position , a1 = y-position
+
+get_cell_address:       # get the index of the cell in the position (x,y)
+  la $t0, grid
+
+  li $t1, 32
+  mul $t2, $a1, $t1       # y * 32
+  add $t2, $t2, $a0       # y * 32 + x
+  sll $t2, $t2, 2         # 4 * (y * 32 + x)
+
+  add $v0, $t0, $t2
+  jr $ra
+
+set_cell:       # store the color from $a2 into the cell--grid(x,y)
+  addi $sp, $sp, -8
+  sw $ra, 4($sp)
+  sw $a2, 0($sp)
+
+  jal get_cell_address
+
+  lw $t0, 0($sp)
+  sw $t0, 0($v0)
+
+  lw $ra, 4($sp)
+  addi $sp, $sp, 8
+
+  jr $ra
+
+
+get_cell:       #return the color in $v0 for the grid(x,y)
+  addi $sp, $sp, -4
+  sw $ra, 0($sp)
+
+  jal get_cell_address
+  lw $v0, 0($v0)
+
+  lw $ra, 0($sp)
+  addi $sp, $sp, 4
+  jr $ra
+
+
+  #####################################################################
+  # draw grid
+
+  draw_grid:
+    lw $t0, ADDR_DSPL
+    la $t1, grid
+    li $t2, 1024
+
+  draw_grid_loop:
+    beq $t2, $zero, draw_grid_done
+    lw $t3, 0($t1)
+    sw $t3, 0($t0)
+    addi $t0, $t0, 4
+    addi $t1, $t1, 4
+    addi $t2, $t2, -1
+    b draw_grid_loop
+
+  draw_grid_done:
+    jr $ra
+
+  ######################################################
+# check collision
+check_collision:
+  addi $sp, $sp, -4
+  sw $ra, 0($sp)
+
+  lw $t0, col_y
+  li $t1, 28
+  beq $t0, $t1, check_collision_yes
+
+  lw $a0, col_x
+  addi $a1, $t0, 3              # The row number of the brick under the draw_column
+  jal get_cell
+  bne $v0, $zero, check_collision_yes
+
+  move $v0, $zero
+  b check_collision_done
+
+check_collision_yes:
+  li $v0, 1
+
+check_collision_done:
+  lw $ra, 0($sp)
+  addi $sp, $sp, 4
+  jr $ra
+
+
+##################################################################
+# lock column -- write the color into the column(3 cells)
+
+lock_column:
+  addi $sp, $sp, -4
+  sw $ra, 0($sp)
+
+  lw $a0, col_x
+  lw $a1, col_y
+  lw $a2, color_top
+  jal set_cell
+
+  lw $a0, col_x
+  lw $t0, col_y
+  lw $a2, color_middle
+  addi $a1, $t0, 1
+  jal set_cell
+
+  lw $a0, col_x
+  lw $t0, col_y
+  lw $a2, color_bottom
+  addi $a1, $t0, 2
+  jal set_cell
+
+  lw $ra, 0($sp)
+  addi $sp, $sp, 4
+  jr $ra
+
+#################################################################
+# create new column at the color_top
+create_new_column:
+  addi $sp, $sp, -4
+  sw $ra, 0($sp)
+
+  li $a0, 15
+  li $a1, 7
+  jal get_cell
+  bne $v0, $zero, game_over
+
+  li   $t0, 15
+  li   $t1, 7
+  sw   $t0, col_x
+  sw   $t1, col_y
+
+  jal  get_random_color
+  sw   $v0, color_top
+
+  jal  get_random_color
+  sw   $v0, color_middle
+
+  jal  get_random_color
+  sw   $v0, color_bottom
+
+  lw   $ra, 0($sp)
+  addi $sp, $sp, 4
+  jr   $ra
+
+
+
+game_over:
+  lw $ra, 0($sp)
+  addi $sp, $sp, 4
+  b respond_to_Q
+
+
+
+##########################################################
+# set all the element in mark_grid as 0
+clear_mark_grid:
+  la $t0, mark_grid
+  li $t1, 1024
+
+clear_mark_loop:
+  beq $t1, $zero, clear_mark_done
+  sw $zero, 0($t0)
+  addi $t0, $t0, 4
+  addi $t1, $t1, -1
+  b clear_mark_loop
+
+clear_mark_done:
+  jr $ra
+
+
+############################################################
+# get mark_grid address
+# return v0 as the address for mark_grid[x][y]
+get_mark_address:
+  la $t0, mark_grid
+
+  li $t1, 32
+  mul $t2, $a1, $t1       # y * 32
+  add $t2, $t2, $a0       # y * 32 + x
+  sll $t2, $t2, 2         # 4 * (y * 32 + x)
+
+  add $v0, $t0, $t2
+  jr $ra
+
+mark_cell:                  # set mark_grid[x][y] = 1
+  addi $sp, $sp, -4
+  sw $ra, 0($sp)
+
+  jal get_mark_address
+  li $t0,1
+  sw $t0, 0($v0)
+
+  lw $ra, 0($sp)
+  addi $sp, $sp, 4
+  jr $ra
+
+
+#############################################################################
+# Remove mathces cell (horizontal, vertical, diagonal-right, diagonal- left)
+remove_matches:
+    addi $sp, $sp, -24
+    sw   $ra, 20($sp)
+    sw   $s0, 16($sp)      #current y
+    sw   $s1, 12($sp)      # current x
+    sw   $s2, 8($sp)       # current color
+    sw   $s3, 4($sp)       # mark_grid
+    sw   $s4, 0($sp)       # matcg flag
+
+    jal  clear_mark_grid
+    li   $s4, 0                 # matches-found flag
+
+    # ---- Horizontal scan: y=7..30, x=10..19 ----
+    li   $s0, 7
+rm_horiz_y:
+    li   $t0, 31
+    beq  $s0, $t0, rm_vert_start
+    li   $s1, 10
+rm_horiz_x:
+    li   $t0, 20
+    beq  $s1, $t0, rm_horiz_next_y
+
+    move $a0, $s1
+    move $a1, $s0
+    jal  get_cell
+    move $s2, $v0
+    beq  $s2, $zero, rm_horiz_next_x   #first cell
+
+    addi $a0, $s1, 1
+    move $a1, $s0
+    jal  get_cell
+    bne  $v0, $s2, rm_horiz_next_x     # second cell
+
+    addi $a0, $s1, 2
+    move $a1, $s0
+    jal  get_cell
+    bne  $v0, $s2, rm_horiz_next_x     # Third cell
+
+    li   $s4, 1
+    move $a0, $s1
+    move $a1, $s0
+    jal  mark_cell
+    addi $a0, $s1, 1
+    move $a1, $s0
+    jal  mark_cell
+    addi $a0, $s1, 2
+    move $a1, $s0
+    jal  mark_cell
+
+rm_horiz_next_x:
+    addi $s1, $s1, 1
+    b    rm_horiz_x
+rm_horiz_next_y:
+    addi $s0, $s0, 1
+    b    rm_horiz_y
+
+    # ---- Vertical scan: y=7..28, x=10..21 ----
+rm_vert_start:
+    li   $s0, 7
+rm_vert_y:
+    li   $t0, 29
+    beq  $s0, $t0, rm_diagr_start
+    li   $s1, 10
+rm_vert_x:
+    li   $t0, 22
+    beq  $s1, $t0, rm_vert_next_y
+
+    move $a0, $s1
+    move $a1, $s0
+    jal  get_cell
+    move $s2, $v0
+    beq  $s2, $zero, rm_vert_next_x
+
+    move $a0, $s1
+    addi $a1, $s0, 1
+    jal  get_cell
+    bne  $v0, $s2, rm_vert_next_x
+
+    move $a0, $s1
+    addi $a1, $s0, 2
+    jal  get_cell
+    bne  $v0, $s2, rm_vert_next_x
+
+    li   $s4, 1
+    move $a0, $s1
+    move $a1, $s0
+    jal  mark_cell
+    move $a0, $s1
+    addi $a1, $s0, 1
+    jal  mark_cell
+    move $a0, $s1
+    addi $a1, $s0, 2
+    jal  mark_cell
+
+rm_vert_next_x:
+    addi $s1, $s1, 1
+    b    rm_vert_x
+rm_vert_next_y:
+    addi $s0, $s0, 1
+    b    rm_vert_y
+
+    # ---- Diagonal ↘ scan: y=7..28, x=10..19 ----
+rm_diagr_start:
+    li   $s0, 7
+rm_diagr_y:
+    li   $t0, 29
+    beq  $s0, $t0, rm_diagl_start
+    li   $s1, 10
+rm_diagr_x:
+    li   $t0, 20
+    beq  $s1, $t0, rm_diagr_next_y
+
+    move $a0, $s1
+    move $a1, $s0
+    jal  get_cell
+    move $s2, $v0
+    beq  $s2, $zero, rm_diagr_next_x
+
+    addi $a0, $s1, 1
+    addi $a1, $s0, 1
+    jal  get_cell
+    bne  $v0, $s2, rm_diagr_next_x
+
+    addi $a0, $s1, 2
+    addi $a1, $s0, 2
+    jal  get_cell
+    bne  $v0, $s2, rm_diagr_next_x
+
+    li   $s4, 1
+    move $a0, $s1
+    move $a1, $s0
+    jal  mark_cell
+    addi $a0, $s1, 1
+    addi $a1, $s0, 1
+    jal  mark_cell
+    addi $a0, $s1, 2
+    addi $a1, $s0, 2
+    jal  mark_cell
+
+rm_diagr_next_x:
+    addi $s1, $s1, 1
+    b    rm_diagr_x
+rm_diagr_next_y:
+    addi $s0, $s0, 1
+    b    rm_diagr_y
+
+    # ---- Diagonal ↙ scan: y=7..28, x=12..21 ----
+rm_diagl_start:
+    li   $s0, 7
+rm_diagl_y:
+    li   $t0, 29
+    beq  $s0, $t0, rm_clear_start
+    li   $s1, 12
+rm_diagl_x:
+    li   $t0, 22
+    beq  $s1, $t0, rm_diagl_next_y
+
+    move $a0, $s1
+    move $a1, $s0
+    jal  get_cell
+    move $s2, $v0
+    beq  $s2, $zero, rm_diagl_next_x
+
+    addi $a0, $s1, -1
+    addi $a1, $s0, 1
+    jal  get_cell
+    bne  $v0, $s2, rm_diagl_next_x
+
+    addi $a0, $s1, -2
+    addi $a1, $s0, 2
+    jal  get_cell
+    bne  $v0, $s2, rm_diagl_next_x
+
+    li   $s4, 1
+    move $a0, $s1
+    move $a1, $s0
+    jal  mark_cell
+    addi $a0, $s1, -1
+    addi $a1, $s0, 1
+    jal  mark_cell
+    addi $a0, $s1, -2
+    addi $a1, $s0, 2
+    jal  mark_cell
+
+rm_diagl_next_x:
+    addi $s1, $s1, 1
+    b    rm_diagl_x
+rm_diagl_next_y:
+    addi $s0, $s0, 1
+    b    rm_diagl_y
+
+    # ---- Clear phase: set grid[y][x] = 0 wherever mark_grid == 1 ----
+rm_clear_start:
+    li   $s0, 7
+rm_clear_y:
+    li   $t0, 31
+    beq  $s0, $t0, rm_done
+    li   $s1, 10
+rm_clear_x:
+    li   $t0, 22
+    beq  $s1, $t0, rm_clear_next_y
+
+    move $a0, $s1
+    move $a1, $s0
+    jal  get_mark_address
+    lw   $s3, 0($v0)
+    beq  $s3, $zero, rm_clear_next_x
+
+    move $a0, $s1
+    move $a1, $s0
+    move $a2, $zero
+    jal  set_cell
+
+rm_clear_next_x:
+    addi $s1, $s1, 1
+    b    rm_clear_x
+rm_clear_next_y:
+    addi $s0, $s0, 1
+    b    rm_clear_y
+
+rm_done:
+    move $v0, $s4
+
+    lw   $s4, 0($sp)
+    lw   $s3, 4($sp)
+    lw   $s2, 8($sp)
+    lw   $s1, 12($sp)
+    lw   $s0, 16($sp)
+    lw   $ra, 20($sp)
+    addi $sp, $sp, 24
+    jr   $ra
+
+##########################################################################
+# consider gravity
+#   Scan from bottom (y=30) to top (y=8).
+#   If grid[y][x] == 0 and grid[y-1][x] != 0, move block down.
+#   Repeat passes until no block moves (stable).
+#   Playfield: x = 10..21, y = 7..30
+apply_gravity:
+    addi $sp, $sp, -24
+    sw   $ra, 20($sp)
+    sw   $s0, 16($sp)
+    sw   $s1, 12($sp)
+    sw   $s2, 8($sp)
+    sw   $s3, 4($sp)
+    sw   $s4, 0($sp)
+
+gravity_pass:
+    li   $s4, 0                 # changed flag
+
+    li   $s0, 30                # y = 30 (bottom of playfield)
+gravity_y:
+    li   $t0, 7
+    beq  $s0, $t0, gravity_check
+
+    li   $s1, 10                # x = 10
+gravity_x:
+    li   $t0, 22
+    beq  $s1, $t0, gravity_next_y
+
+    move $a0, $s1
+    move $a1, $s0
+    jal  get_cell
+    bne  $v0, $zero, gravity_next_x
+
+    move $a0, $s1
+    addi $a1, $s0, -1
+    jal  get_cell
+    beq  $v0, $zero, gravity_next_x
+
+    move $s2, $v0
+    move $a0, $s1
+    move $a1, $s0
+    move $a2, $s2
+    jal  set_cell
+
+    move $a0, $s1
+    addi $a1, $s0, -1
+    move $a2, $zero
+    jal  set_cell
+
+    li   $s4, 1
+
+gravity_next_x:   # x++ ,search for each column
+    addi $s1, $s1, 1
+    b    gravity_x
+
+gravity_next_y:    # y--  search for each row
+    addi $s0, $s0, -1
+    b    gravity_y
+
+gravity_check:
+    bne  $s4, $zero, gravity_pass
+
+    lw   $s4, 0($sp)
+    lw   $s3, 4($sp)
+    lw   $s2, 8($sp)
+    lw   $s1, 12($sp)
+    lw   $s0, 16($sp)
+    lw   $ra, 20($sp)
+    addi $sp, $sp, 24
+    jr   $ra
+
+
+  ######################################################
+# check collision
+check_horizontal_collision:
+  addi $sp, $sp, -8
+  sw $ra, 0($sp)
+  sw $s0, 4($sp)
+
+  move $a0, $s0
+  lw $a1, col_y
+  jal get_cell
+  bne $v0, $zero, horiz_col_yes
+
+  move $a0, $s0
+  lw $a1, col_y
+  addi $a1, $a1, 1
+  jal get_cell
+  bne $v0, $zero, horiz_col_yes
+
+  move $a0, $s0
+  lw $a1, col_y
+  addi $a1, $a1, 2
+  jal get_cell
+  bne $v0, $zero, horiz_col_yes
+
+  move $v0, $zero
+  b check_horizontal_collision_done
+
+horiz_col_yes:
+  li $v0, 1
+
+check_horizontal_collision_done:
+  lw $ra, 0($sp)
+  lw $s0, 4($sp)
+  addi $sp, $sp, 8
+  jr $ra
+
+
+
+
+
+
+
 
 ##############################################################################
 # draw_border
