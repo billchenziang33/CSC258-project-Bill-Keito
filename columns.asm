@@ -67,6 +67,8 @@ main:
     # Draw border first
     jal draw_border
 
+    jal draw_title
+
     jal get_random_color
     sw $v0, color_top
 
@@ -84,6 +86,10 @@ main:
 # Main game loop
 ##############################################################################
 main_loop:
+    jal draw_grid
+    jal draw_border
+    jal draw_title
+    jal draw_column
     # Small delay
     li   $v0, 32
     li   $a0, 16      # Repaint at 60HZ
@@ -101,7 +107,7 @@ main_loop:
 keyboard_input:
     lw   $a0, 4($t0)
 
-    beq  $a0, 0x71, respond_to_Q     # q
+    beq  $a0, 0x71, game_over_screen # q
     beq  $a0, 0x61, move_left        # a
     beq  $a0, 0x64, move_right       # d
     beq  $a0, 0x77, shuffle_column   # w
@@ -186,6 +192,7 @@ resolve_loop:
 resolve_done:
   jal draw_grid
   jal draw_border
+  jal draw_title
   jal create_new_column
   jal draw_column
   b main_loop
@@ -398,7 +405,7 @@ create_new_column:
   li $a0, 15
   li $a1, 7
   jal get_cell
-  bne $v0, $zero, game_over
+  bne $v0, $zero, spawn_game_over
 
   li   $t0, 15
   li   $t1, 7
@@ -420,10 +427,15 @@ create_new_column:
 
 
 
-game_over:
+spawn_game_over:
   lw $ra, 0($sp)
   addi $sp, $sp, 4
-  b respond_to_Q
+  b game_over_screen
+
+game_over_screen:
+  jal draw_game_over
+game_over_loop:
+  b game_over_loop
 
 
 
@@ -574,7 +586,7 @@ rm_vert_next_y:
     addi $s0, $s0, 1
     b    rm_vert_y
 
-    # ---- Diagonal ↘ scan: y=7..28, x=10..19 ----
+    # ---- Diagonal ??scan: y=7..28, x=10..19 ----
 rm_diagr_start:
     li   $s0, 7
 rm_diagr_y:
@@ -619,7 +631,7 @@ rm_diagr_next_y:
     addi $s0, $s0, 1
     b    rm_diagr_y
 
-    # ---- Diagonal ↙ scan: y=7..28, x=12..21 ----
+    # ---- Diagonal ??scan: y=7..28, x=12..21 ----
 rm_diagl_start:
     li   $s0, 7
 rm_diagl_y:
@@ -874,11 +886,11 @@ draw_border:
 #   $t9 = color
 ##############################################################################
 draw_rectangle:
-    addi $sp, $sp, -4
+    addi $sp, $sp, -12
     sw   $ra, 0($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 8($sp)
 
-    move $t0, $a0           # start x
-    move $t1, $a1           # start y
     move $t2, $a2           # width
     move $t3, $a3           # height
 
@@ -892,6 +904,9 @@ rect_row_loop:
 rect_col_loop:
     beq  $t5, $t2, next_row
 
+    lw $t0, 4($sp)           # start x
+    lw $t1, 8($sp)        # start y
+
     # current_x = start_x + col
     add  $t6, $t0, $t5
 
@@ -900,11 +915,10 @@ rect_col_loop:
 
     # addr = base + ((current_y * 32 + current_x) * 4)
     lw   $t8, ADDR_DSPL
-    li   $s0, 32
-    mul  $s1, $t7, $s0
-    add  $s1, $s1, $t6
-    sll  $s1, $s1, 2
-    add  $t8, $t8, $s1
+    sll  $t0, $t7, 5        # current_y * 32
+    add  $t0, $t0, $t6
+    sll  $t0, $t0, 2
+    add  $t8, $t8, $t0
 
     sw   $t9, 0($t8)
 
@@ -917,7 +931,680 @@ next_row:
 
 rect_done:
     lw   $ra, 0($sp)
-    addi $sp, $sp, 4
+    addi $sp, $sp, 12
+    jr   $ra
+
+##############################################################################
+# draw_title
+# Draw "column" above the top border using the six existing colors in color_list
+##############################################################################
+draw_title:
+    addi $sp, $sp, -8
+    sw   $ra, 4($sp)
+    sw   $s0, 0($sp)
+
+    la   $s0, color_list
+
+    lw   $t9, 0($s0)
+    li   $a0, 4
+    li   $a1, 0
+    jal  draw_letter_c
+
+    lw   $t9, 4($s0)
+    li   $a0, 8
+    li   $a1, 0
+    jal  draw_letter_o
+
+    lw   $t9, 8($s0)
+    li   $a0, 12
+    li   $a1, 0
+    jal  draw_letter_l
+
+    lw   $t9, 12($s0)
+    li   $a0, 16
+    li   $a1, 0
+    jal  draw_letter_u
+
+    lw   $t9, 16($s0)
+    li   $a0, 20
+    li   $a1, 0
+    jal  draw_letter_m
+
+    lw   $t9, 20($s0)
+    li   $a0, 26
+    li   $a1, 0
+    jal  draw_letter_n
+
+    lw   $s0, 0($sp)
+    lw   $ra, 4($sp)
+    addi $sp, $sp, 8
+    jr   $ra
+
+##############################################################################
+# 3x5 title letters
+# Inputs:
+#   $a0 = start x
+#   $a1 = start y
+#   $t9 = color
+##############################################################################
+draw_letter_c:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 4
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+draw_letter_o:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 4
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 2
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+draw_letter_l:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 4
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+draw_letter_u:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 2
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 4
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+draw_letter_m:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 4
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 1
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 2
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 2
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 3
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+draw_letter_n:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 3
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 1
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 2
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 2
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+##############################################################################
+# draw_game_over
+# Clear screen and draw "GAME OVER"
+##############################################################################
+draw_game_over:
+    addi $sp, $sp, -8
+    sw   $ra, 4($sp)
+    sw   $s0, 0($sp)
+
+    # Clear whole bitmap to black
+    li   $t9, 0x000000
+    li   $a0, 0
+    li   $a1, 0
+    li   $a2, 32
+    li   $a3, 32
+    jal  draw_rectangle
+
+    # Draw GAME (row 1) using 7x7 glyphs
+    li   $t9, 0xFFFFFF
+    li   $a0, 0
+    li   $a1, 7
+    jal  draw_letter7_g
+
+    li   $a0, 8
+    li   $a1, 7
+    jal  draw_letter7_a
+
+    li   $a0, 16
+    li   $a1, 7
+    jal  draw_letter7_m
+
+    li   $a0, 24
+    li   $a1, 7
+    jal  draw_letter7_e
+
+    # Draw OVER (row 2) using 7x7 glyphs
+    li   $a0, 0
+    li   $a1, 18
+    jal  draw_letter7_o
+
+    li   $a0, 8
+    li   $a1, 18
+    jal  draw_letter7_v
+
+    li   $a0, 16
+    li   $a1, 18
+    jal  draw_letter7_e
+
+    li   $a0, 24
+    li   $a1, 18
+    jal  draw_letter7_r
+
+    lw   $s0, 0($sp)
+    lw   $ra, 4($sp)
+    addi $sp, $sp, 8
+    jr   $ra
+
+##############################################################################
+# 7x7 game over letters
+##############################################################################
+draw_letter7_g:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 1
+    li   $a2, 5
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 1
+    addi $a1, $a1, 6
+    li   $a2, 5
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 6
+    addi $a1, $a1, 3
+    li   $a2, 1
+    li   $a3, 3
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 3
+    addi $a1, $a1, 3
+    li   $a2, 4
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+draw_letter7_a:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 1
+    li   $a2, 5
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 6
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 6
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 6
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 1
+    addi $a1, $a1, 3
+    li   $a2, 5
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+draw_letter7_m:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 7
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 6
+    li   $a2, 1
+    li   $a3, 7
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 1
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 2
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 2
+    addi $a1, $a1, 2
+    li   $a2, 1
+    li   $a3, 2
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 3
+    addi $a1, $a1, 3
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 4
+    addi $a1, $a1, 2
+    li   $a2, 1
+    li   $a3, 2
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 5
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 2
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+draw_letter7_e:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 7
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 1
+    li   $a2, 6
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 1
+    addi $a1, $a1, 3
+    li   $a2, 5
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 1
+    addi $a1, $a1, 6
+    li   $a2, 6
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+draw_letter7_o:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 1
+    li   $a2, 5
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 1
+    addi $a1, $a1, 6
+    li   $a2, 5
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 6
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+draw_letter7_v:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 4
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 6
+    li   $a2, 1
+    li   $a3, 4
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 1
+    addi $a1, $a1, 4
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 5
+    addi $a1, $a1, 4
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 2
+    addi $a1, $a1, 5
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 4
+    addi $a1, $a1, 5
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 3
+    addi $a1, $a1, 6
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+draw_letter7_r:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 7
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 1
+    li   $a2, 5
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 1
+    addi $a1, $a1, 3
+    li   $a2, 5
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 6
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 2
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 3
+    addi $a1, $a1, 4
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 4
+    addi $a1, $a1, 5
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a0, $a0, 5
+    addi $a1, $a1, 6
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
     jr   $ra
 
 ##############################################################################
