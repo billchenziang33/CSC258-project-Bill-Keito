@@ -61,6 +61,9 @@ mark_grid:
 score:
     .word 0
 
+high_score:
+    .word 0
+
 score_fg_color:
     .word 0xFFFFFF
 
@@ -137,7 +140,10 @@ digit_font_3x5:
 # main
 ##############################################################################
 main:
-    # Draw border first
+    # Clear entire screen first (grid is all zeros after reset)
+    jal draw_grid
+
+    # Draw border
     jal draw_border
 
     jal draw_title
@@ -161,15 +167,9 @@ main:
 ##############################################################################
 main_loop:
     # Small delay
-     li   $v0, 32
-     li   $a0, 16      # Repaint at 60HZ
-     syscall
-
-    jal draw_grid
-    jal draw_border
-    jal draw_title
-    jal draw_column
-    jal draw_score
+    li   $v0, 32
+    li   $a0, 16
+    syscall
 
     # Poll keyboard
     lw   $t0, ADDR_KBRD
@@ -577,7 +577,7 @@ reset_game_state:
   jal  clear_grid
   jal  clear_mark_grid
 
-  li   $t0, 15
+  li   $t0, 6
   li   $t1, 7
   sw   $t0, col_x
   sw   $t1, col_y
@@ -1089,46 +1089,66 @@ add_score:
     addu $t2, $t2, $t0
     sw   $t2, score
 
+    lw   $t3, high_score
+    sltu $t4, $t3, $t2
+    beq  $t4, $zero, add_score_done
+    sw   $t2, high_score
+
 add_score_done:
     jr   $ra
 
 ##############################################################################
 # draw_score
-# Draw bottom-right score panel:
-#   line 1: SCORE
-#   line 2: numeric value
+# Draw right-side score panel:
+#   Row 1: PTS label + current score number
+#   Row 2: HI  label + high score number
 ##############################################################################
 draw_score:
     addi $sp, $sp, -8
     sw   $ra, 4($sp)
     sw   $s0, 0($sp)
 
-    # clear score area
+    # clear entire score panel area
     lw   $t9, score_bg_color
-    li   $a0, 19
-    li   $a1, 20
-    li   $a2, 13
-    li   $a3, 8
+    li   $a0, 15
+    li   $a1, 8
+    li   $a2, 17
+    li   $a3, 24
     jal  draw_rectangle
 
     lw   $t9, score_fg_color
 
-    # "PTS"
-    li   $a0, 19
-    li   $a1, 20
+    # --- Row 1: PTS ---
+    li   $a0, 15
+    li   $a1, 8
     jal  draw_letter_p
 
-    li   $a0, 23
-    li   $a1, 20
+    li   $a0, 19
+    li   $a1, 8
     jal  draw_letter_t
 
-    li   $a0, 27
-    li   $a1, 20
+    li   $a0, 23
+    li   $a1, 8
     jal  draw_letter_s
 
-    # numeric score, 1 row gap below "PTS"
+    # current score number below PTS
     lw   $a0, score
-    li   $a1, 19
+    li   $a1, 15
+    li   $a2, 14
+    jal  draw_number
+
+    # --- Row 2: HI ---
+    li   $a0, 15
+    li   $a1, 20
+    jal  draw_letter_h
+
+    li   $a0, 19
+    li   $a1, 20
+    jal  draw_letter_i
+
+    # high score number below HI
+    lw   $a0, high_score
+    li   $a1, 15
     li   $a2, 26
     jal  draw_number
 
@@ -1351,6 +1371,79 @@ draw_letter_r:
     addi $a1, $a1, 3
     li   $a2, 1
     li   $a3, 2
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+##############################################################################
+# draw_letter_h (3x5)
+##############################################################################
+draw_letter_h:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    # left stem
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    # right stem
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 2
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    # middle bar
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 2
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+##############################################################################
+# draw_letter_i (3x5)
+##############################################################################
+draw_letter_i:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    # top bar
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # center stem
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 1
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 3
+    jal  draw_rectangle
+
+    # bottom bar
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 4
+    li   $a2, 3
+    li   $a3, 1
     jal  draw_rectangle
 
     lw   $ra, 8($sp)
