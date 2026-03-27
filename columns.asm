@@ -7,6 +7,7 @@
 # - w: shuffle colors downward
 # - s: move down
 # - q: quit
+# - r: retry (on game over screen)
 #
 # Bitmap configuration:
 # - Unit width in pixels: 8
@@ -25,7 +26,7 @@ ADDR_DSPL:
 
 # Column state
 col_x:
-    .word 15              # initial x (top middle inside border)
+    .word 6              # initial x (top middle inside border)
 
 col_y:
     .word 7               # initial y
@@ -57,6 +58,78 @@ grid:
 mark_grid:
   .space 4096    # 32 * 32 * 4
 
+score:
+    .word 0
+
+score_fg_color:
+    .word 0xFFFFFF
+
+score_bg_color:
+    .word 0x000000
+
+# 3x5 digit font (3 bits each row), 10 digits * 5 rows
+digit_font_3x5:
+    # 0
+    .word 0b111
+    .word 0b101
+    .word 0b101
+    .word 0b101
+    .word 0b111
+    # 1
+    .word 0b010
+    .word 0b110
+    .word 0b010
+    .word 0b010
+    .word 0b111
+    # 2
+    .word 0b111
+    .word 0b001
+    .word 0b111
+    .word 0b100
+    .word 0b111
+    # 3
+    .word 0b111
+    .word 0b001
+    .word 0b111
+    .word 0b001
+    .word 0b111
+    # 4
+    .word 0b101
+    .word 0b101
+    .word 0b111
+    .word 0b001
+    .word 0b001
+    # 5
+    .word 0b111
+    .word 0b100
+    .word 0b111
+    .word 0b001
+    .word 0b111
+    # 6
+    .word 0b111
+    .word 0b100
+    .word 0b111
+    .word 0b101
+    .word 0b111
+    # 7
+    .word 0b111
+    .word 0b001
+    .word 0b001
+    .word 0b001
+    .word 0b001
+    # 8
+    .word 0b111
+    .word 0b101
+    .word 0b111
+    .word 0b101
+    .word 0b111
+    # 9
+    .word 0b111
+    .word 0b101
+    .word 0b111
+    .word 0b001
+    .word 0b111
+
 .text
 .globl main
 
@@ -68,6 +141,7 @@ main:
     jal draw_border
 
     jal draw_title
+    jal draw_score
 
     jal get_random_color
     sw $v0, color_top
@@ -86,14 +160,16 @@ main:
 # Main game loop
 ##############################################################################
 main_loop:
+    # Small delay
+     li   $v0, 32
+     li   $a0, 16      # Repaint at 60HZ
+     syscall
+
     jal draw_grid
     jal draw_border
     jal draw_title
     jal draw_column
-    # Small delay
-    li   $v0, 32
-    li   $a0, 16      # Repaint at 60HZ
-    syscall
+    jal draw_score
 
     # Poll keyboard
     lw   $t0, ADDR_KBRD
@@ -117,11 +193,11 @@ keyboard_input:
 
 ##############################################################################
 # Move left: x = x - 1
-# Left inside boundary is x = 10
+# Left inside boundary is x = 1
 ##############################################################################
 move_left:
     lw   $t1, col_x
-    li   $t2, 10
+    li   $t2, 1
     beq  $t1, $t2, main_loop     # do nothing if already at left boundary
 
     lw   $a0, col_x
@@ -140,11 +216,11 @@ move_left:
 
 ##############################################################################
 # Move right: x = x + 1
-# Right inside boundary is x = 21
+# Right inside boundary is x = 12
 ##############################################################################
 move_right:
     lw   $t1, col_x
-    li   $t2, 21
+    li   $t2, 12
     beq  $t1, $t2, main_loop     # do nothing if already at right boundary
 
     lw   $a0, col_x
@@ -182,17 +258,24 @@ move_down:
 
 move_down_lock:
   jal lock_column
+  li  $s5, 1
 
 resolve_loop:
   jal remove_matches
   beq $v0, $zero, resolve_done
+  move $a0, $v0
+  move $a1, $s5
+  jal add_score
+  addi $s5, $s5, 1
   jal apply_gravity
   b resolve_loop
 
 resolve_done:
+  li  $s5, 1
   jal draw_grid
   jal draw_border
   jal draw_title
+  jal draw_score
   jal create_new_column
   jal draw_column
   b main_loop
@@ -402,12 +485,12 @@ create_new_column:
   addi $sp, $sp, -4
   sw $ra, 0($sp)
 
-  li $a0, 15
+  li $a0, 6
   li $a1, 7
   jal get_cell
   bne $v0, $zero, spawn_game_over
 
-  li   $t0, 15
+  li   $t0, 6
   li   $t1, 7
   sw   $t0, col_x
   sw   $t1, col_y
@@ -435,7 +518,20 @@ spawn_game_over:
 game_over_screen:
   jal draw_game_over
 game_over_loop:
-  b game_over_loop
+  # Poll keyboard while staying on game over screen
+  lw   $t0, ADDR_KBRD
+  lw   $t8, 0($t0)
+  beq  $t8, 1, game_over_input
+  b    game_over_loop
+
+game_over_input:
+  lw   $a0, 4($t0)
+  beq  $a0, 0x72, retry_game      # r
+  b    game_over_loop
+
+retry_game:
+  jal  reset_game_state
+  b    main
 
 
 
@@ -454,6 +550,43 @@ clear_mark_loop:
 
 clear_mark_done:
   jr $ra
+
+##########################################################
+# clear grid
+# set all the element in grid as 0
+clear_grid:
+  la $t0, grid
+  li $t1, 1024
+
+clear_grid_loop:
+  beq $t1, $zero, clear_grid_done
+  sw $zero, 0($t0)
+  addi $t0, $t0, 4
+  addi $t1, $t1, -1
+  b clear_grid_loop
+
+clear_grid_done:
+  jr $ra
+
+##########################################################
+# reset game state for retry
+reset_game_state:
+  addi $sp, $sp, -4
+  sw   $ra, 0($sp)
+
+  jal  clear_grid
+  jal  clear_mark_grid
+
+  li   $t0, 15
+  li   $t1, 7
+  sw   $t0, col_x
+  sw   $t1, col_y
+
+  sw   $zero, score
+
+  lw   $ra, 0($sp)
+  addi $sp, $sp, 4
+  jr   $ra
 
 
 ############################################################
@@ -486,25 +619,27 @@ mark_cell:                  # set mark_grid[x][y] = 1
 #############################################################################
 # Remove mathces cell (horizontal, vertical, diagonal-right, diagonal- left)
 remove_matches:
-    addi $sp, $sp, -24
-    sw   $ra, 20($sp)
-    sw   $s0, 16($sp)      #current y
-    sw   $s1, 12($sp)      # current x
-    sw   $s2, 8($sp)       # current color
-    sw   $s3, 4($sp)       # mark_grid
-    sw   $s4, 0($sp)       # matcg flag
+    addi $sp, $sp, -28
+    sw   $ra, 24($sp)
+    sw   $s0, 20($sp)      # current y
+    sw   $s1, 16($sp)      # current x
+    sw   $s2, 12($sp)      # current color
+    sw   $s3, 8($sp)       # mark_grid
+    sw   $s4, 4($sp)       # match flag
+    sw   $s5, 0($sp)       # removed count
 
     jal  clear_mark_grid
     li   $s4, 0                 # matches-found flag
+    li   $s5, 0                 # removed gems count
 
-    # ---- Horizontal scan: y=7..30, x=10..19 ----
+    # ---- Horizontal scan: y=7..30, x=1..10 ----
     li   $s0, 7
 rm_horiz_y:
     li   $t0, 31
     beq  $s0, $t0, rm_vert_start
-    li   $s1, 10
+    li   $s1, 1
 rm_horiz_x:
-    li   $t0, 20
+    li   $t0, 11
     beq  $s1, $t0, rm_horiz_next_y
 
     move $a0, $s1
@@ -541,15 +676,15 @@ rm_horiz_next_y:
     addi $s0, $s0, 1
     b    rm_horiz_y
 
-    # ---- Vertical scan: y=7..28, x=10..21 ----
+    # ---- Vertical scan: y=7..28, x=1..12 ----
 rm_vert_start:
     li   $s0, 7
 rm_vert_y:
     li   $t0, 29
     beq  $s0, $t0, rm_diagr_start
-    li   $s1, 10
+    li   $s1, 1
 rm_vert_x:
-    li   $t0, 22
+    li   $t0, 13
     beq  $s1, $t0, rm_vert_next_y
 
     move $a0, $s1
@@ -586,15 +721,15 @@ rm_vert_next_y:
     addi $s0, $s0, 1
     b    rm_vert_y
 
-    # ---- Diagonal ??scan: y=7..28, x=10..19 ----
+    # ---- Diagonal right scan: y=7..28, x=1..10 ----
 rm_diagr_start:
     li   $s0, 7
 rm_diagr_y:
     li   $t0, 29
     beq  $s0, $t0, rm_diagl_start
-    li   $s1, 10
+    li   $s1, 1
 rm_diagr_x:
-    li   $t0, 20
+    li   $t0, 11
     beq  $s1, $t0, rm_diagr_next_y
 
     move $a0, $s1
@@ -631,15 +766,15 @@ rm_diagr_next_y:
     addi $s0, $s0, 1
     b    rm_diagr_y
 
-    # ---- Diagonal ??scan: y=7..28, x=12..21 ----
+    # ---- Diagonal left scan: y=7..28, x=3..12 ----
 rm_diagl_start:
     li   $s0, 7
 rm_diagl_y:
     li   $t0, 29
     beq  $s0, $t0, rm_clear_start
-    li   $s1, 12
+    li   $s1, 3
 rm_diagl_x:
-    li   $t0, 22
+    li   $t0, 13
     beq  $s1, $t0, rm_diagl_next_y
 
     move $a0, $s1
@@ -682,9 +817,9 @@ rm_clear_start:
 rm_clear_y:
     li   $t0, 31
     beq  $s0, $t0, rm_done
-    li   $s1, 10
+    li   $s1, 1
 rm_clear_x:
-    li   $t0, 22
+    li   $t0, 13
     beq  $s1, $t0, rm_clear_next_y
 
     move $a0, $s1
@@ -697,6 +832,7 @@ rm_clear_x:
     move $a1, $s0
     move $a2, $zero
     jal  set_cell
+    addi $s5, $s5, 1
 
 rm_clear_next_x:
     addi $s1, $s1, 1
@@ -706,15 +842,16 @@ rm_clear_next_y:
     b    rm_clear_y
 
 rm_done:
-    move $v0, $s4
+    move $v0, $s5
 
-    lw   $s4, 0($sp)
-    lw   $s3, 4($sp)
-    lw   $s2, 8($sp)
-    lw   $s1, 12($sp)
-    lw   $s0, 16($sp)
-    lw   $ra, 20($sp)
-    addi $sp, $sp, 24
+    lw   $s5, 0($sp)
+    lw   $s4, 4($sp)
+    lw   $s3, 8($sp)
+    lw   $s2, 12($sp)
+    lw   $s1, 16($sp)
+    lw   $s0, 20($sp)
+    lw   $ra, 24($sp)
+    addi $sp, $sp, 28
     jr   $ra
 
 ##########################################################################
@@ -740,9 +877,9 @@ gravity_y:
     li   $t0, 7
     beq  $s0, $t0, gravity_check
 
-    li   $s1, 10                # x = 10
+    li   $s1, 1                 # x = 1
 gravity_x:
-    li   $t0, 22
+    li   $t0, 13
     beq  $s1, $t0, gravity_next_y
 
     move $a0, $s1
@@ -796,7 +933,7 @@ check_horizontal_collision:
   sw $ra, 0($sp)
   sw $s0, 4($sp)
 
-  move $a0, $s0
+  move $s0, $a0
   lw $a1, col_y
   jal get_cell
   bne $v0, $zero, horiz_col_yes
@@ -844,28 +981,28 @@ draw_border:
     li   $t9, 0xFFFFFF      # white border color
 
     # Border top: x=10, y=6, width=12, height=1
-    addi $a0, $zero, 10
+    addi $a0, $zero, 1
     addi $a1, $zero, 6
     addi $a2, $zero, 12
     addi $a3, $zero, 1
     jal  draw_rectangle
 
     # Border bottom: x=10, y=31, width=12, height=1
-    addi $a0, $zero, 10
+    addi $a0, $zero, 1
     addi $a1, $zero, 31
     addi $a2, $zero, 12
     addi $a3, $zero, 1
     jal  draw_rectangle
 
     # Border left: x=9, y=6, width=1, height=26
-    addi $a0, $zero, 9
+    addi $a0, $zero, 0
     addi $a1, $zero, 6
     addi $a2, $zero, 1
     addi $a3, $zero, 26
     jal  draw_rectangle
 
     # Border right: x=22, y=6, width=1, height=26
-    addi $a0, $zero, 22
+    addi $a0, $zero, 13
     addi $a1, $zero, 6
     addi $a2, $zero, 1
     addi $a3, $zero, 26
@@ -932,6 +1069,421 @@ next_row:
 rect_done:
     lw   $ra, 0($sp)
     addi $sp, $sp, 12
+    jr   $ra
+
+##############################################################################
+# add_score
+# score += removed_gems * 10 * chain_multiplier
+# Inputs:
+#   $a0 = removed_gems
+#   $a1 = chain_multiplier
+##############################################################################
+add_score:
+    blez $a0, add_score_done
+
+    mul  $t0, $a0, $a1
+    li   $t1, 10
+    mul  $t0, $t0, $t1
+
+    lw   $t2, score
+    addu $t2, $t2, $t0
+    sw   $t2, score
+
+add_score_done:
+    jr   $ra
+
+##############################################################################
+# draw_score
+# Draw bottom-right score panel:
+#   line 1: SCORE
+#   line 2: numeric value
+##############################################################################
+draw_score:
+    addi $sp, $sp, -8
+    sw   $ra, 4($sp)
+    sw   $s0, 0($sp)
+
+    # clear score area
+    lw   $t9, score_bg_color
+    li   $a0, 19
+    li   $a1, 20
+    li   $a2, 13
+    li   $a3, 8
+    jal  draw_rectangle
+
+    lw   $t9, score_fg_color
+
+    # "PTS"
+    li   $a0, 19
+    li   $a1, 20
+    jal  draw_letter_p
+
+    li   $a0, 23
+    li   $a1, 20
+    jal  draw_letter_t
+
+    li   $a0, 27
+    li   $a1, 20
+    jal  draw_letter_s
+
+    # numeric score, 1 row gap below "PTS"
+    lw   $a0, score
+    li   $a1, 19
+    li   $a2, 26
+    jal  draw_number
+
+    lw   $s0, 0($sp)
+    lw   $ra, 4($sp)
+    addi $sp, $sp, 8
+    jr   $ra
+
+##############################################################################
+# draw_letter_p (3x5)
+##############################################################################
+draw_letter_p:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    # left stem
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    # top bar
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # right upper stem
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 2
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 2
+    jal  draw_rectangle
+
+    # middle bar
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 2
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+##############################################################################
+# draw_letter_t (3x5)
+##############################################################################
+draw_letter_t:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    # top bar
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # center stem
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 1
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 4
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+##############################################################################
+# draw_letter_s (3x5)
+##############################################################################
+draw_letter_s:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    # top
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # upper-left
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # middle
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 2
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # lower-right
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 2
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 3
+    li   $a2, 1
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # bottom
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 4
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+##############################################################################
+# draw_letter_e (3x5)
+##############################################################################
+draw_letter_e:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    # left stem
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    # top bar
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # middle bar
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 2
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # bottom bar
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 4
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+##############################################################################
+# draw_letter_r (3x5)
+##############################################################################
+draw_letter_r:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    # left stem
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    # top bar
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # right upper stem
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 2
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 2
+    jal  draw_rectangle
+
+    # middle bar
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 2
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # right lower leg
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 2
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 3
+    li   $a2, 1
+    li   $a3, 2
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+##############################################################################
+# draw_digit
+# Inputs:
+#   $a0 = digit (0..9)
+#   $a1 = x
+#   $a2 = y
+##############################################################################
+draw_digit:
+    li   $t0, 10
+    sltu $t1, $a0, $t0
+    beq  $t1, $zero, draw_digit_done
+
+    la   $t2, digit_font_3x5
+    li   $t3, 20              # 5 rows * 4 bytes
+    mul  $t4, $a0, $t3
+    addu $t2, $t2, $t4
+
+    li   $t5, 0               # row
+draw_digit_row_loop:
+    li   $t0, 5
+    beq  $t5, $t0, draw_digit_done
+
+    sll  $t6, $t5, 2
+    addu $t7, $t2, $t6
+    lw   $t8, 0($t7)
+
+    li   $t0, 0               # col
+draw_digit_col_loop:
+    li   $t1, 3
+    beq  $t0, $t1, draw_digit_next_row
+
+    li   $t1, 2
+    subu $t1, $t1, $t0
+    li   $t3, 1
+    sllv $t3, $t3, $t1
+    and  $t4, $t8, $t3
+    beq  $t4, $zero, draw_digit_next_col
+
+    addu $t6, $a1, $t0
+    addu $t7, $a2, $t5
+    lw   $t9, score_fg_color
+    lw   $t1, ADDR_DSPL
+    sll  $t3, $t7, 5
+    addu $t3, $t3, $t6
+    sll  $t3, $t3, 2
+    addu $t1, $t1, $t3
+    sw   $t9, 0($t1)
+
+draw_digit_next_col:
+    addi $t0, $t0, 1
+    b    draw_digit_col_loop
+
+draw_digit_next_row:
+    addi $t5, $t5, 1
+    b    draw_digit_row_loop
+
+draw_digit_done:
+    jr   $ra
+
+##############################################################################
+# draw_number
+# Inputs:
+#   $a0 = number
+#   $a1 = x
+#   $a2 = y
+##############################################################################
+draw_number:
+    addi $sp, $sp, -80
+    sw   $ra, 76($sp)
+    sw   $s0, 72($sp)
+    sw   $s1, 68($sp)
+    sw   $s2, 64($sp)
+    sw   $s3, 60($sp)
+    sw   $s4, 56($sp)
+    sw   $s5, 52($sp)
+
+    move $s0, $a0             # number
+    move $s1, $a1             # x
+    move $s2, $a2             # y
+    li   $s3, 0               # digit count
+
+    bne  $s0, $zero, draw_number_extract
+    sw   $zero, 0($sp)
+    li   $s3, 1
+    b    draw_number_draw_setup
+
+draw_number_extract:
+    li   $t7, 10
+draw_number_extract_loop:
+    beq  $s0, $zero, draw_number_draw_setup
+    divu $s0, $t7
+    mfhi $t0
+    mflo $s0
+
+    sll  $t1, $s3, 2
+    addu $t2, $sp, $t1
+    sw   $t0, 0($t2)
+    addi $s3, $s3, 1
+    b    draw_number_extract_loop
+
+draw_number_draw_setup:
+    addi $s4, $s3, -1         # index (highest stored digit)
+    move $s5, $s1             # current x
+
+draw_number_draw_loop:
+    bltz $s4, draw_number_done
+
+    sll  $t1, $s4, 2
+    addu $t2, $sp, $t1
+    lw   $a0, 0($t2)
+    move $a1, $s5
+    move $a2, $s2
+    jal  draw_digit
+
+    addi $s5, $s5, 4          # 3 pixels + 1 space
+    addi $s4, $s4, -1
+    b    draw_number_draw_loop
+
+draw_number_done:
+    lw   $s5, 52($sp)
+    lw   $s4, 56($sp)
+    lw   $s3, 60($sp)
+    lw   $s2, 64($sp)
+    lw   $s1, 68($sp)
+    lw   $s0, 72($sp)
+    lw   $ra, 76($sp)
+    addi $sp, $sp, 80
     jr   $ra
 
 ##############################################################################
