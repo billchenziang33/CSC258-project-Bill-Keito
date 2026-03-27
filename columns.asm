@@ -70,6 +70,18 @@ score_fg_color:
 score_bg_color:
     .word 0x000000
 
+drop_counter:
+    .word 0
+
+drop_speed: # Default speed
+    .word 60
+
+speed_step:# Decrease speed by 5 every 100 points
+    .word 5
+
+difficulty:
+    .word 0   # 0=easy, 1=medium, 2=hard
+
 # 3x5 digit font (3 bits each row), 10 digits * 5 rows
 digit_font_3x5:
     # 0
@@ -140,6 +152,7 @@ digit_font_3x5:
 # main
 ##############################################################################
 main:
+    jal select_difficulty
     # Clear entire screen first (grid is all zeros after reset)
     jal draw_grid
 
@@ -161,21 +174,123 @@ main:
     # Draw initial column
     jal draw_column
 
-
 ##############################################################################
 # Main game loop
 ##############################################################################
 main_loop:
+    jal update_speed
     # Small delay
     li   $v0, 32
     li   $a0, 16
     syscall
+
+    lw   $t0, drop_counter
+    addi $t0, $t0, 1
+    sw   $t0, drop_counter
+
+    lw   $t1, drop_speed
+    blt  $t0, $t1, skip_auto_drop
+
+    # reset the count
+    li   $t0, 0
+    sw   $t0, drop_counter
+
+    # Move down 
+    jal  move_down
+
+skip_auto_drop:
 
     # Poll keyboard
     lw   $t0, ADDR_KBRD
     lw   $t8, 0($t0)
     beq  $t8, 1, keyboard_input
     b    main_loop
+
+##############################################################################
+# Speed handling
+##############################################################################
+update_speed:
+    # --- decide base_speed based on difficulty ---
+    lw   $t0, difficulty
+
+    beq  $t0, 0, set_easy_speed
+    beq  $t0, 1, set_medium_speed
+    beq  $t0, 2, set_hard_speed
+
+set_easy_speed:
+    li   $t3, 60     # easy
+    b base_done
+
+set_medium_speed:
+    li   $t3, 50     # medium
+    b base_done
+
+set_hard_speed:
+    li   $t3, 35     # hard
+
+base_done:
+
+    # --- level = score / 100 ---
+    lw   $t1, score #set score
+    li   $t2, 100 #set 100
+    div  $t1, $t2 #score / 100
+    mflo $t4         # level
+
+    # --- speed = base - level * step ---
+    lw   $t5, speed_step
+    mul  $t6, $t4, $t5
+    sub  $t7, $t3, $t6
+
+    # --- Lowest speed constraint ---
+    li   $t8, 10 # set lowest speed to 10
+    bgt  $t7, $t8, speed_ok
+    li   $t7, 10
+
+speed_ok:
+    sw   $t7, drop_speed
+
+    jr $ra
+
+##############################################################################
+# Select difficulty 
+##############################################################################
+
+select_difficulty:
+
+wait_input:
+    lw   $t0, ADDR_KBRD
+    lw   $t1, 0($t0)
+    beq  $t1, 1, key_pressed
+    b    wait_input
+
+key_pressed:
+    lw   $t2, 4($t0)   # Get the pressed key
+
+    li   $t3, 0x31     # Press '1'
+    beq  $t2, $t3, set_easy_diff # Set easy level
+
+    li   $t3, 0x32     # Press '2'
+    beq  $t2, $t3, set_medium_diff #Set Medium level
+
+    li   $t3, 0x33     # Press '3'
+    beq  $t2, $t3, set_hard_diff #Set Hard level
+
+    b wait_input 
+
+set_easy_diff:
+    li $t4, 0
+    sw $t4, difficulty
+    jr $ra
+
+set_medium_diff:
+    li $t4, 1
+    sw $t4, difficulty
+    jr $ra
+
+set_hard_diff:
+    li $t4, 2
+    sw $t4, difficulty
+    jr $ra
 
 ##############################################################################
 # Keyboard handling
