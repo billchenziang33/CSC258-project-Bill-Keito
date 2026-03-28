@@ -8,6 +8,11 @@
 # - s: move down
 # - q: quit
 # - r: retry (on game over screen)
+# - p: paused and resume
+# - 1: Easy mode
+# - 2: Medium mode
+# - 3: Hard mode
+
 #
 # Bitmap configuration:
 # - Unit width in pixels: 8
@@ -81,6 +86,9 @@ speed_step:# Decrease speed by 5 every 100 points
 
 difficulty:
     .word 0   # 0=easy, 1=medium, 2=hard
+
+paused:
+    .word 0 # Paused 
 
 # 3x5 digit font (3 bits each row), 10 digits * 5 rows
 digit_font_3x5:
@@ -178,6 +186,7 @@ main:
 # Main game loop
 ##############################################################################
 main_loop:
+  
     jal update_speed
     # Small delay
     li   $v0, 32
@@ -254,7 +263,6 @@ speed_ok:
 ##############################################################################
 # Select difficulty 
 ##############################################################################
-
 select_difficulty:
 
 wait_input:
@@ -303,6 +311,7 @@ keyboard_input:
     beq  $a0, 0x64, move_right       # d
     beq  $a0, 0x77, shuffle_column   # w
     beq  $a0, 0x73, move_down        # s
+    beq  $a0, 0x70, do_pause     # p
 
     b    main_loop
 
@@ -594,6 +603,7 @@ lock_column:
   addi $sp, $sp, 4
   jr $ra
 
+
 #################################################################
 # create new column at the color_top
 create_new_column:
@@ -624,7 +634,6 @@ create_new_column:
   jr   $ra
 
 
-
 spawn_game_over:
   lw $ra, 0($sp)
   addi $sp, $sp, 4
@@ -647,7 +656,6 @@ game_over_input:
 retry_game:
   jal  reset_game_state
   b    main
-
 
 
 ##########################################################
@@ -731,6 +739,38 @@ mark_cell:                  # set mark_grid[x][y] = 1
   jr $ra
 
 
+############################################################
+# Paused the game
+do_pause:
+    li   $t0, 1　#set the paused flag to 1
+    sw   $t0, paused
+    jal  draw_pause_screen #call draw paused screen
+
+do_pause_clear:
+    lw   $t0, ADDR_KBRD
+    lw   $t1, 4($t0)
+
+do_pause_wait:
+    lw   $t0, ADDR_KBRD
+    lw   $t1, 0($t0)
+    beq  $t1, $zero, do_pause_wait　# if the key is 0, wait until the p key is pressed.
+
+    lw   $t2, 4($t0)
+    li   $t3, 0x70          # 'p'
+    bne  $t2, $t3, do_pause_wait #if the key is not p, wait until the p key is pressed.
+
+    sw   $zero, paused # resume
+
+    # After resume, redraw the game situation
+    jal  draw_grid
+    jal  draw_border
+    jal  draw_title
+    jal  draw_score
+    jal  draw_column
+
+    b    main_loop
+
+    
 #############################################################################
 # Remove mathces cell (horizontal, vertical, diagonal-right, diagonal- left)
 remove_matches:
@@ -1076,12 +1116,6 @@ check_horizontal_collision_done:
   lw $s0, 4($sp)
   addi $sp, $sp, 8
   jr $ra
-
-
-
-
-
-
 
 
 ##############################################################################
@@ -2367,6 +2401,156 @@ draw_letter7_r:
     addi $sp, $sp, 12
     jr   $ra
 
+
+##############################################################################
+# Draw paused screen
+##############################################################################
+draw_pause_screen:
+    addi $sp, $sp, -8　#Allocate 8 bytes on the stack to store saved registers.
+    sw   $ra, 4($sp) #Save the return address ($ra) onto the stack.
+    sw   $s0, 0($sp) #Save the callee-saved register ($s0) onto the stack.
+
+    # Clear the background with black
+    li   $t9, 0x000000
+    li   $a0, 0
+    li   $a1, 0
+    li   $a2, 32
+    li   $a3, 32
+    jal  draw_rectangle
+
+    # Set the color to white
+    li   $t9, 0xFFFFFF
+
+    # Display「PAUSED」 (y=13)
+    # P
+    li   $a0, 4
+    li   $a1, 13
+    jal  draw_letter_p
+
+    # A 
+    li   $a0, 8
+    li   $a1, 13
+    jal  draw_letter_a   
+
+    # U
+    li   $a0, 12
+    li   $a1, 13
+    jal  draw_letter_u
+
+    # S
+    li   $a0, 16
+    li   $a1, 13
+    jal  draw_letter_s
+
+    # E
+    li   $a0, 20
+    li   $a1, 13
+    jal  draw_letter_e
+
+    # D
+    li   $a0, 24
+    li   $a1, 13
+    jal  draw_letter_d
+
+    lw   $s0, 0($sp) #Restore the original value of $s0 from the stack.
+    lw   $ra, 4($sp) #Restore the return address ($ra) from the stack.
+    addi $sp, $sp, 8 #Deallocate the stack space and restore the stack pointer.
+    jr   $ra #Return to the caller using the restored return address.
+
+
+
+##############################################################################
+# draw_letter_a (3x5)
+##############################################################################
+draw_letter_a:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+    
+    # top bar
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # left stem
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 4
+    jal  draw_rectangle
+
+    # right stem
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 2
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 4
+    jal  draw_rectangle
+
+    # middle bar
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 2
+    li   $a2, 3
+    li   $a3, 1
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+
+##############################################################################
+# draw_letter_d (3x5)
+##############################################################################
+draw_letter_d:
+    addi $sp, $sp, -12
+    sw   $ra, 8($sp)
+    sw   $a0, 4($sp)
+    sw   $a1, 0($sp)
+
+    # left stem
+    lw   $a0, 4($sp)
+    lw   $a1, 0($sp)
+    li   $a2, 1
+    li   $a3, 5
+    jal  draw_rectangle
+
+    # top bar
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 1
+    lw   $a1, 0($sp)
+    li   $a2, 2
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # bottom bar
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 1
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 4
+    li   $a2, 2
+    li   $a3, 1
+    jal  draw_rectangle
+
+    # right stem
+    lw   $a0, 4($sp)
+    addi $a0, $a0, 2
+    lw   $a1, 0($sp)
+    addi $a1, $a1, 1
+    li   $a2, 1
+    li   $a3, 3
+    jal  draw_rectangle
+
+    lw   $ra, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+    
 ##############################################################################
 # Quit
 ##############################################################################
