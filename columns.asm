@@ -45,6 +45,15 @@ color_middle:
 color_bottom:
     .word 0x0000FF        # blue
 
+next_color_top:
+    .word 0xFF0000
+
+next_color_middle:
+    .word 0x00FF00
+
+next_color_bottom:
+    .word 0x0000FF
+
 
 bg_color:
     .word 0x000000        # black
@@ -179,8 +188,18 @@ main:
     jal get_random_color
     sw $v0, color_bottom
 
+    jal get_random_color
+    sw $v0, next_color_top
+
+    jal get_random_color
+    sw $v0, next_color_middle
+
+    jal get_random_color
+    sw $v0, next_color_bottom
+
     # Draw initial column
     jal draw_column
+    jal draw_next_panel
 
     jal select_difficulty
 
@@ -403,6 +422,7 @@ resolve_done:
   jal draw_title
   jal draw_score
   jal create_new_column
+  jal draw_next_panel
   jal draw_column
   b main_loop
 
@@ -622,14 +642,21 @@ create_new_column:
   sw   $t0, col_x
   sw   $t1, col_y
 
-  jal  get_random_color
-  sw   $v0, color_top
+  lw   $t2, next_color_top
+  sw   $t2, color_top
+  lw   $t2, next_color_middle
+  sw   $t2, color_middle
+  lw   $t2, next_color_bottom
+  sw   $t2, color_bottom
 
   jal  get_random_color
-  sw   $v0, color_middle
+  sw   $v0, next_color_top
 
   jal  get_random_color
-  sw   $v0, color_bottom
+  sw   $v0, next_color_middle
+
+  jal  get_random_color
+  sw   $v0, next_color_bottom
 
   lw   $ra, 0($sp)
   addi $sp, $sp, 4
@@ -707,6 +734,13 @@ reset_game_state:
   sw   $t0, col_x
   sw   $t1, col_y
 
+  jal  get_random_color
+  sw   $v0, next_color_top
+  jal  get_random_color
+  sw   $v0, next_color_middle
+  jal  get_random_color
+  sw   $v0, next_color_bottom
+
   sw   $zero, score
 
   lw   $ra, 0($sp)
@@ -768,6 +802,7 @@ do_pause_wait:
     jal  draw_border
     jal  draw_title
     jal  draw_score
+    jal  draw_next_panel
     jal  draw_column
 
     b    main_loop
@@ -1306,6 +1341,76 @@ draw_score:
     lw   $s0, 0($sp)
     lw   $ra, 4($sp)
     addi $sp, $sp, 8
+    jr   $ra
+
+##############################################################################
+# draw_next_panel
+# Draw next-column preview at far-right middle area
+##############################################################################
+draw_next_panel:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+
+    # Clear preview area (right-middle)
+    lw   $t9, score_bg_color
+    li   $a0, 27
+    li   $a1, 17
+    li   $a2, 5
+    li   $a3, 10
+    jal  draw_rectangle
+
+    # Draw a thin frame
+    lw   $t9, score_fg_color
+    li   $a0, 28
+    li   $a1, 16
+    li   $a2, 4
+    li   $a3, 1
+    jal  draw_rectangle
+
+    li   $a0, 28
+    li   $a1, 23
+    li   $a2, 4
+    li   $a3, 1
+    jal  draw_rectangle
+
+    li   $a0, 28
+    li   $a1, 16
+    li   $a2, 1
+    li   $a3, 8
+    jal  draw_rectangle
+
+    li   $a0, 31
+    li   $a1, 16
+    li   $a2, 1
+    li   $a3, 8
+    jal  draw_rectangle
+
+    # Top preview block
+    lw   $t9, next_color_top
+    li   $a0, 29
+    li   $a1, 17
+    li   $a2, 2
+    li   $a3, 2
+    jal  draw_rectangle
+
+    # Middle preview block
+    lw   $t9, next_color_middle
+    li   $a0, 29
+    li   $a1, 19
+    li   $a2, 2
+    li   $a3, 2
+    jal  draw_rectangle
+
+    # Bottom preview block
+    lw   $t9, next_color_bottom
+    li   $a0, 29
+    li   $a1, 21
+    li   $a2, 2
+    li   $a3, 2
+    jal  draw_rectangle
+
+    lw   $ra, 0($sp)
+    addi $sp, $sp, 4
     jr   $ra
 
 ##############################################################################
@@ -2559,4 +2664,3 @@ draw_letter_d:
 respond_to_Q:
     li   $v0, 10
     syscall
-    // final version
