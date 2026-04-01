@@ -403,20 +403,16 @@ move_down:
 
 move_down_lock:
   jal lock_column
-  li  $s5, 1
 
 resolve_loop:
   jal remove_matches
   beq $v0, $zero, resolve_done
   move $a0, $v0
-  move $a1, $s5
   jal add_score
-  addi $s5, $s5, 1
   jal apply_gravity
   b resolve_loop
 
 resolve_done:
-  li  $s5, 1
   jal draw_grid
   jal draw_border
   jal draw_title
@@ -1259,17 +1255,40 @@ rect_done:
 
 ##############################################################################
 # add_score
-# score += removed_gems * 10 * chain_multiplier
+# score += (removed_gems / 3) * difficulty_points
 # Inputs:
 #   $a0 = removed_gems
-#   $a1 = chain_multiplier
+# difficulty values:
+#   0 = easy   -> 10 points per 3 removed cells
+#   1 = medium -> 20 points per 3 removed cells
+#   2 = hard   -> 30 points per 3 removed cells
 ##############################################################################
 add_score:
     blez $a0, add_score_done
 
-    mul  $t0, $a0, $a1
-    li   $t1, 10
-    mul  $t0, $t0, $t1
+    # units = removed_gems / 3
+    li   $t1, 3
+    div  $a0, $t1
+    mflo $t0
+    blez $t0, add_score_done
+
+    # base points from difficulty
+    lw   $t1, difficulty
+    beq  $t1, $zero, score_easy
+    li   $t2, 1
+    beq  $t1, $t2, score_medium
+    li   $t3, 30
+    b    score_base_done
+
+score_easy:
+    li   $t3, 10
+    b    score_base_done
+
+score_medium:
+    li   $t3, 20
+
+score_base_done:
+    mul  $t0, $t0, $t3
 
     lw   $t2, score
     addu $t2, $t2, $t0
